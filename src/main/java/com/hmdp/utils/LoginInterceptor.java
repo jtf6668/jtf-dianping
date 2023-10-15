@@ -18,13 +18,8 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class LoginInterceptor implements HandlerInterceptor {
 
-    private StringRedisTemplate stringRedisTemplate;
-    public LoginInterceptor(StringRedisTemplate stringRedisTemplate) {
-        this.stringRedisTemplate = stringRedisTemplate;
-    }
-
     /**
-     * 拦截没有令牌的请求
+     * 拦截threadLocal中没有用户的请求
      * @param request
      * @param response
      * @param handler
@@ -33,29 +28,13 @@ public class LoginInterceptor implements HandlerInterceptor {
      */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        //1.获取请求头中的token
-        String token = request.getHeader("authorization");
-        if(StrUtil.isBlank(token)){
+        //1.判断是否需要拦截，threadLocal中有没有用户
+        if(UserHolder.getUser() == null){
             response.setStatus(401);
             return false;
         }
 
-        //基于token取出redis的用户
-        Map<Object, Object> userMap = stringRedisTemplate.opsForHash().entries(RedisConstants.LOGIN_USER_KEY + token);
-
-        if(userMap.isEmpty()){
-            response.setStatus(401);
-            return false;
-        }
-
-        //把查询到的Hash对象转为DTO
-        UserDTO userDTO = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
-
-        //存到ThreadLocal
-        UserHolder.saveUser(userDTO);
-
-        //更新token有效期
-        stringRedisTemplate.expire(RedisConstants.LOGIN_USER_KEY + token,RedisConstants.LOGIN_USER_TTL, TimeUnit.MINUTES);
+        //有用户，放行
         return true;
     }
 

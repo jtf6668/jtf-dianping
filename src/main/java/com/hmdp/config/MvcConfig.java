@@ -1,6 +1,7 @@
 package com.hmdp.config;
 
 import com.hmdp.utils.LoginInterceptor;
+import com.hmdp.utils.RefreshInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -18,7 +19,9 @@ public class MvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new LoginInterceptor(stringRedisTemplate))
+
+        //拦截需要用户登录的请求
+        registry.addInterceptor(new LoginInterceptor( ))
                 .excludePathPatterns(
                         "/user/code",
                         "/user/login",
@@ -27,6 +30,9 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/shop-type/**",
                         "/upload/**",
                         "/voucher/**"
-                );
+                ).order(1);
+
+        //拦截所有请求，用于刷新令牌生效时间
+        registry.addInterceptor(new RefreshInterceptor(stringRedisTemplate)).order(0);
     }
 }
