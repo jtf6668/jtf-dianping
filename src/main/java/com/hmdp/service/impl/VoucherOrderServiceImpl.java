@@ -9,6 +9,7 @@ import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,7 +41,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
      * @return
      */
     @Override
-    @Transactional
     public Result seckillVoucher(Long voucherId) {
         //1.查询优惠秒杀卷
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
@@ -57,31 +57,61 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("库存不足");
         }
 
-        //5.库存充足，扣减库存
-        boolean success =seckillVoucherService.update()
-                .setSql("stock = stock - 1")//set stock = stock - 1
-                .eq("voucher_id", voucherId).gt("stock",0).update();//where id = ? and stock = ?
-        //判断扣减是否成功
-        if (!success) {
-            return Result.fail("扣减失败");
-        }
-
-        //6.创建订单
-        //6.1.订单id
-        VoucherOrder voucherOrder = new VoucherOrder();
-        long orderId = redisIdWorker.nextId("order");
-        voucherOrder.setId(orderId);
-        //用户id,在localThread中拿
         Long userId = UserHolder.getUser().getId();
-        voucherOrder.setUserId(userId);
+        //在这加锁最合适，因为这里是事务提交完再释放锁
+        synchronized (userId.toString().intern()) {
+            //return creatVoucherOrder(voucherId);//这里的creatVoucherOrder(voucherId)是this.creatVoucherOrder(voucherId)，拿到的是VoucherOrderServiceImpl对象而非代理对象，没有事务功能
+            //拿到代理对象(事务)
+            IVoucherOrderService  proxy = (IVoucherOrderService) AopContext.currentProxy();
+            return proxy.creatVoucherOrder(voucherId);
+        }
+    }
 
-        //6.3.代金券id
-        voucherOrder.setVoucherId(voucherId);
+    /**
+     * 在一人一单时查询不能使用乐观锁（乐观锁通过比较数据上锁，要修改数据才能比较数据，这里比较不了），只能加悲观锁
+     * @param voucherId
+     * @return
+     */
+    @Transactional
+    //public synchronized Result creatVoucherOrder(Long voucherId) {//这里加锁范围过大，只需针对用户id加锁即可
+    public Result creatVoucherOrder(Long voucherId) {
+        //一人一单,获取用户id，在localThread中拿
+        Long userId = UserHolder.getUser().getId();
 
-        //7.保存订单
-        save(voucherOrder);
+        //给用户加锁,用户id值一样的加一把锁，注意，每次来的对象都是不一样的，toString的底层也是不一样，所以要用intern方法
+        //这个锁的意思是锁定这个用户，下面这段函数没执行完下一个相同id的请求不能加入下段代码，而其他不同id的用户可以进来，当这段代码执行完后才能释放锁，下一次这个用户id才可以进来。
+       // synchronized (userId.toString().intern()) {//用于这里加了事务，事务在锁释放后提交，这时还没有写入数据库，如果在事务提交前锁释放后这个时间段有其他线程进来，依然会出现并发问题。所以锁不能放在这里
+            query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+            //判断该用户订单是否已经存在，即该用户是否购买过该优惠券
+            if (count() > 0) {
+                //已经购买过了
+                return Result.fail("用户已经购买过了");
+            }
 
-        //8.返回订单id
-        return Result.ok(orderId);
+            //5.库存充足，扣减库存
+            boolean success = seckillVoucherService.update()
+                    .setSql("stock = stock - 1")//set stock = stock - 1
+                    .eq("voucher_id", voucherId).gt("stock", 0).update();//where id = ? and stock = ?
+            //判断扣减是否成功
+            if (!success) {
+                return Result.fail("扣减失败");
+            }
+
+            //6.创建订单
+            //6.1.订单id
+            VoucherOrder voucherOrder = new VoucherOrder();
+            long orderId = redisIdWorker.nextId("order");
+            voucherOrder.setId(orderId);
+            //用户id
+            voucherOrder.setUserId(userId);
+
+            //6.3.代金券id
+            voucherOrder.setVoucherId(voucherId);
+
+            //7.保存订单
+            save(voucherOrder);
+
+            //8.返回订单id
+            return Result.ok(orderId);
     }
 }
