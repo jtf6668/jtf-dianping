@@ -58,9 +58,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
 
         //5.库存充足，扣减库存
-        boolean success = seckillVoucherService.update()
-                .setSql("stock = stock - 1")
-                .eq("voucher_id", voucherId).update();
+        boolean success =seckillVoucherService.update()
+                .setSql("stock = stock - 1")//set stock = stock - 1
+                .eq("voucher_id", voucherId).gt("stock",0).update();//where id = ? and stock = ?
         //判断扣减是否成功
         if (!success) {
             return Result.fail("扣减失败");
