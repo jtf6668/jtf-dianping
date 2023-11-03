@@ -1,5 +1,6 @@
 package com.hmdp.utils;
 
+import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.StrUtil;
 
 /**
