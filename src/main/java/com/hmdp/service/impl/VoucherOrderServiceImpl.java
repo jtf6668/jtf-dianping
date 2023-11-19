@@ -10,13 +10,18 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Collections;
 
 /**
  * <p>
@@ -35,9 +40,20 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    @Resource
+    private RedissonClient redissonClient;
     //注入id生成器
     @Resource
     private RedisIdWorker redisIdWorker;
+
+    //初始化lua脚本，使用静态代码块在类加载之前执行，只执行一遍，就不用每次释放锁时加载一遍，性能提升
+    private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
+    static {
+        SECKILL_SCRIPT = new DefaultRedisScript<>();
+        //设置lua脚本位置
+        SECKILL_SCRIPT.setLocation(new ClassPathResource("seckill.lua"));
+        SECKILL_SCRIPT.setResultType(Long.class);
+    }
 
     /**
      * 用户抢购秒杀券，将秒杀券订单信息保存到数据库中
@@ -46,40 +62,23 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
      */
     @Override
     public Result seckillVoucher(Long voucherId) {
-        //1.查询优惠秒杀卷
-        SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
-        //2.判断秒杀是否开始
-        if(voucher.getBeginTime().isAfter(LocalDateTime.now())){
-            return Result.fail("秒杀尚未开始");
-        }
-        //3.判断秒杀是否结束
-        if(voucher.getEndTime().isBefore(LocalDateTime.now())){
-            return Result.fail("秒杀已经结束");
-        }
-        //4.判断库存是否充足
-        if (voucher.getStock() < 1) {
-            return Result.fail("库存不足");
-        }
-
+        //获取用户
         Long userId = UserHolder.getUser().getId();
-        //在这加锁最合适，因为这里是事务提交完再释放锁
-        //创建锁对象,锁的范围是id
-        SimpleRedisLock lock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
-        //获取锁，设置锁的超时时间，过期就删除这个键（释放锁）
-        boolean isLock = lock.tryLock(1200);
-        //判断锁是否获取成功
-        if(!isLock){//获取失败
-            return Result.fail("不允许重复下单");
+        //1.执行lua脚本，查看有没有购买资格
+        Long result = stringRedisTemplate.execute(
+                SECKILL_SCRIPT, Collections.emptyList(), voucherId.toString(), userId.toString()
+        );
+
+        int r = result.intValue();
+        if(r != 0){
+            //没有购买资格
+            return Result.fail(r == 1 ? "库存不足" : "不能重复下单");
         }
-        try {
-            //return creatVoucherOrder(voucherId);//这里的creatVoucherOrder(voucherId)是this.creatVoucherOrder(voucherId)，拿到的是VoucherOrderServiceImpl对象而非代理对象，没有事务功能
-            //拿到代理对象(事务)
-            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
-            return proxy.creatVoucherOrder(voucherId);
-        }finally {
-            //业务完成，释放锁
-            lock.unlock();
-        }
+        //判断结果为0
+        //保存id到堵塞队列中
+        long orderId = redisIdWorker.nextId("order");
+        //TODO 堵塞队列
+        return Result.ok(orderId);
     }
 
     /**
