@@ -17,7 +17,7 @@ if(tonumber(redis.call('get',stockKey)) <= 0) then
     return 1
 end
 --3.2.判断用户是否下单 ，查看订单的key
-if(redis.call('sismmber',orderKey,userId) == 1) then
+if(redis.call('sismember', orderKey, userId) == 1) then
     --3.3存在，说明是重复下单，返回二
     return 2
 end

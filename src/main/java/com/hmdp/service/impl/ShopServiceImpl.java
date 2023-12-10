@@ -234,25 +234,25 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 //    private void unlock(String key){
 //        stringRedisTemplate.delete(key);
 //    }
-//
-//    /**
-//     * 在redis中将店铺信息加上店铺信息有效时间，形成逻辑有效时间
-//     * @param id
-//     * @param expireSecond
-//     */
-//    public void saveShop2Redis(Long id,Long expireSecond) throws InterruptedException{
-//        //查询店铺数据
-//        Shop shop = getById(id);
-//        //模拟查询数据库花费时间
-//        Thread.sleep(200);
-//        //封装逻辑过期时间
-//        RedisData redisData = new RedisData();
-//        redisData.setData(shop);
-//        //在现在的时间上加上一段时间
-//        redisData.setExpireTime(LocalDateTime.now().plusSeconds(expireSecond));
-//        //写入redis
-//        stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id,JSONUtil.toJsonStr(redisData));
-//    }
+
+    /**
+     * 在redis中将店铺信息加上店铺信息有效时间，形成逻辑有效时间
+     * @param id
+     * @param expireSecond
+     */
+    public void saveShop2Redis(Long id,Long expireSecond) throws InterruptedException{
+        //查询店铺数据
+        Shop shop = getById(id);
+        //模拟查询数据库花费时间
+        Thread.sleep(200);
+        //封装逻辑过期时间
+        RedisData redisData = new RedisData();
+        redisData.setData(shop);
+        //在现在的时间上加上一段时间
+        redisData.setExpireTime(LocalDateTime.now().plusSeconds(expireSecond));
+        //写入redis
+        stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id,JSONUtil.toJsonStr(redisData));
+    }
 
     @Override
     @Transactional
