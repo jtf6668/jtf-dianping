@@ -11,6 +11,7 @@ import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -35,6 +36,8 @@ import java.util.concurrent.*;
 @Slf4j
 public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, VoucherOrder> implements IVoucherOrderService {
 
+    @Resource
+    private RabbitTemplate rabbitTemplate;
     //调用秒杀券查询
     @Resource
     private ISeckillVoucherService seckillVoucherService;
@@ -65,34 +68,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     //线程池,单线程进行
     private static final ExecutorService SECKILL_ORDER_EXECUTOR = Executors.newSingleThreadExecutor();
 
-    //定义一个类让线程执行
-    private class VoucherOrderHandler implements Runnable{
-        @Override
-        public void run() {
-            while (true){
-                //1.不断获取队列中的订单信息,take方法用于获取并且删除队列的头部，如果队列无元素则等待直到有元素可用
-                try {
-                    VoucherOrder voucherOrder = orderTasks.take();
-                    //创建订单
-                    handlerVoucherOrder(voucherOrder);
-                } catch (Exception e) {
-                    log.error("处理订单异常",e);
-                }
-            }
-        }
-    }
-
-
-
-    @PostConstruct//注解含义：一个方法在完成依赖注入后需要执行。当一个类被实例化并且所有的依赖被注入后执行
-    private void init(){
-        //线程池开始不断运行VoucherOrderHandler
-        SECKILL_ORDER_EXECUTOR.submit(new VoucherOrderHandler());
-    }
-    //线程任务
-
-
-    private void handlerVoucherOrder(VoucherOrder voucherOrder) {
+    public void handlerVoucherOrder(VoucherOrder voucherOrder) {
         //获取用户id
         Long userId = voucherOrder.getUserId();
         //创建锁对象
@@ -105,7 +81,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             log.error("不允许重复下单");
             return;
         }
-        proxy.creatVoucherOrder(voucherOrder);
+        creatVoucherOrder(voucherOrder);
     }
 
 
@@ -130,8 +106,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail(r == 1 ? "库存不足" : "不能重复下单");
         }
         //判断结果为0
-        //保存id信息到堵塞队列中
-        //TODO 堵塞队列
+
         //订单id
         VoucherOrder voucherOrder = new VoucherOrder();
         long orderId = redisIdWorker.nextId("order");
@@ -142,10 +117,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //代金券id
         voucherOrder.setVoucherId(voucherId);
 
-        //将订单信息放入阻塞队列
-        orderTasks.add(voucherOrder);
-        //获取代理对象
-        proxy = (IVoucherOrderService) AopContext.currentProxy();
+        //将订单消息放入RabbitMQ队列
+        String queueName = "test.queues";
+        // 发送消息
+        rabbitTemplate.convertAndSend(queueName, voucherOrder);
 
         return Result.ok(orderId);
     }
